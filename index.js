@@ -360,6 +360,16 @@ async function run() {
             }
         });
 
+        //------------------------------------------------------
+
+        // Example backend GET /sessions route snippet
+        app.get('/sessions', async (req, res) => {
+            const { tutorEmail } = req.query;
+            const filter = tutorEmail ? { tutorEmail } : {};
+            const sessions = await sessionsCollection.find(filter).toArray();
+            res.json(sessions);
+        });
+
         // ======================================================
 
 
