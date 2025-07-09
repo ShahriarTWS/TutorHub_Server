@@ -41,6 +41,7 @@ async function run() {
         const usersCollection = db.collection('usersCollection');
         const tutorsCollection = db.collection('tutorsCollection');
         const adminCollection = db.collection('adminCollection');
+        const sessionsCollection = db.collection('sessions');
 
 
         // ======================================================
@@ -102,6 +103,24 @@ async function run() {
         });
 
         //-------------------------------------------------------
+
+        app.get('/tutors/all', async (req, res) => {
+            const { status, search } = req.query;
+
+            const filter = {};
+            if (status) filter.status = status;
+            if (search) filter.name = { $regex: search, $options: 'i' };
+
+            try {
+                const tutors = await tutorsCollection.find(filter).toArray();
+                res.status(200).json(tutors);
+            } catch (error) {
+                console.error('Error fetching tutors:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
+        //-------------------------------------------------------
         app.get('/tutors/pending', async (req, res) => {
             try {
                 const pendingTutors = await tutorsCollection.find({ status: 'pending' }).toArray();
@@ -118,6 +137,12 @@ async function run() {
             res.send(tutor || {});
         });
 
+        //-------------------------------------------------------
+        app.delete('/tutors/:id', async (req, res) => {
+            const id = req.params.id;
+            const result = await tutorsCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
         //-------------------------------------------------------
 
         // GET pending tutors
@@ -189,6 +214,149 @@ async function run() {
             } catch (error) {
                 console.error('Error checking role:', error);
                 return res.status(500).json({ error: 'Internal Server Error' });
+            }
+        });
+
+        // ======================================================
+
+        // ======================================================
+
+        app.get('/admin/users', async (req, res) => {
+            try {
+                const { search = '', page = 1, limit = 10 } = req.query;
+                const pageNum = parseInt(page);
+                const limitNum = parseInt(limit);
+
+                // Search filter
+                const searchFilter = {
+                    $or: [
+                        { name: { $regex: search, $options: 'i' } },
+                        { email: { $regex: search, $options: 'i' } },
+                    ],
+                };
+
+                // Total count
+                const total = await usersCollection.countDocuments(searchFilter);
+
+                // Users with pagination
+                const users = await usersCollection
+                    .find(searchFilter)
+                    .skip((pageNum - 1) * limitNum)
+                    .limit(limitNum)
+                    .toArray();
+
+                // Fetch approved tutors and all admins
+                const [approvedTutors, admins] = await Promise.all([
+                    tutorsCollection.find({ status: 'approved' }, { projection: { email: 1 } }).toArray(),
+                    adminCollection.find({}, { projection: { email: 1 } }).toArray()
+                ]);
+
+                const tutorEmailsSet = new Set(approvedTutors.map(t => t.email));
+                const adminEmailsSet = new Set(admins.map(a => a.email));
+
+                // Assign correct role
+                const usersWithRole = users.map(user => {
+                    const email = user.email;
+                    if (adminEmailsSet.has(email)) {
+                        return { ...user, role: 'admin' };
+                    } else if (tutorEmailsSet.has(email)) {
+                        return { ...user, role: 'tutor' };
+                    } else {
+                        return { ...user, role: user.role || 'student' };
+                    }
+                });
+
+                res.json({ users: usersWithRole, total });
+            } catch (error) {
+                console.error('Error fetching users:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
+
+        // ======================================================
+        // ✅ ADDED THIS PATCH ROUTE TO UPDATE USER ROLE
+        app.patch('/admin/users/:id/role', async (req, res) => {
+            const { id } = req.params;
+            const { role } = req.body;
+
+            try {
+                const user = await usersCollection.findOne({ _id: new ObjectId(id) });
+                if (!user) return res.status(404).json({ message: 'User not found' });
+
+                const email = user.email;
+
+                // Remove from both role collections first
+                await adminCollection.deleteOne({ email });
+                await tutorsCollection.deleteOne({ email });
+
+                if (role === 'admin') {
+                    await adminCollection.insertOne({ email });
+                } else if (role === 'tutor') {
+                    await tutorsCollection.insertOne({
+                        name: user.name,
+                        email: user.email,
+                        photo: user.photoURL || '',
+                        status: 'approved',
+                        createdAt: new Date()
+                    });
+                }
+
+                // Optionally update user's main role (used in fallback)
+                await usersCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { role } }
+                );
+
+                res.json({ success: true, message: `Role updated to ${role}` });
+            } catch (error) {
+                console.error('❌ Failed to update role:', error);
+                res.status(500).json({ success: false, message: 'Internal server error' });
+            }
+        });
+
+
+        // ======================================================
+
+        app.post('/sessions', async (req, res) => {
+            try {
+                const session = req.body;
+                const result = await sessionsCollection.insertOne({
+                    ...session,
+                    status: 'pending',
+                    createdAt: new Date(),
+                });
+                res.send({ insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Failed to add session:', error);
+                res.status(500).send({ error: 'Failed to add session' });
+            }
+        });
+
+        //---------------------------------------------------------
+        app.get('/admin/sessions', async (req, res) => {
+            try {
+                const sessions = await sessionsCollection.find().toArray();
+                res.send(sessions);
+            } catch (error) {
+                res.status(500).send({ error: 'Failed to fetch sessions' });
+            }
+        });
+
+        //-------------------------------------------------------
+
+        app.patch('/admin/sessions/:id', async (req, res) => {
+            const { id } = req.params;
+            const updates = req.body;
+
+            try {
+                const result = await sessionsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updates }
+                );
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ error: 'Failed to update session' });
             }
         });
 
