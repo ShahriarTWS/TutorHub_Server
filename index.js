@@ -42,6 +42,7 @@ async function run() {
         const tutorsCollection = db.collection('tutorsCollection');
         const adminCollection = db.collection('adminCollection');
         const sessionsCollection = db.collection('sessions');
+        const materialsCollection = db.collection('materials');
 
 
         // ======================================================
@@ -363,12 +364,26 @@ async function run() {
         //------------------------------------------------------
 
         // Example backend GET /sessions route snippet
+        // Optional: Make /sessions only return approved if no tutorEmail
         app.get('/sessions', async (req, res) => {
             const { tutorEmail } = req.query;
-            const filter = tutorEmail ? { tutorEmail } : {};
-            const sessions = await sessionsCollection.find(filter).toArray();
-            res.json(sessions);
+
+            let filter = {};
+            if (tutorEmail) {
+                filter = { tutorEmail, status: 'approved' };
+            } else {
+                filter = { status: 'approved' }; // ✅ Only approved sessions
+            }
+
+            try {
+                const sessions = await sessionsCollection.find(filter).toArray();
+                res.json(sessions);
+            } catch (err) {
+                console.error(err);
+                res.status(500).json({ error: 'Failed to fetch sessions' });
+            }
         });
+
 
         //-------------------------------------------------------
 
@@ -384,6 +399,80 @@ async function run() {
             } catch (error) {
                 console.error(error);
                 res.status(500).send({ error: 'Server error' });
+            }
+        });
+
+
+        // ======================================================
+
+        // ========================================
+        // 📁 Upload Materials
+
+
+        // POST /materials - Upload resource file or link
+        // POST /materials
+        // app.post('/materials/:sessionId', async (req, res) => {
+        //     const { sessionId } = req.params;
+        //     const { type, value } = req.body;
+
+        //     if (!sessionId || !type || !value) {
+        //         return res.status(400).json({ error: 'Session ID, type, and value are required' });
+        //     }
+
+        //     const material = {
+        //         sessionId: new ObjectId(sessionId),
+        //         type, // 'link' or 'file'
+        //         value, // actual URL string or file URL
+        //         uploadedAt: new Date()
+        //     };
+
+        //     try {
+        //         const result = await materialsCollection.insertOne(material);
+        //         res.send({ insertedId: result.insertedId });
+        //     } catch (error) {
+        //         console.error('❌ Error uploading material:', error);
+        //         res.status(500).send({ error: 'Failed to upload material' });
+        //     }
+        // });
+
+
+        // GET /materials/:sessionId - Fetch uploaded materials for a session
+        app.post('/materials/:sessionId', async (req, res) => {
+            const { sessionId } = req.params;
+            const { title, description, uploadedBy, resourceLink, fileURL } = req.body;
+
+            if (!resourceLink && !fileURL) {
+                return res.status(400).json({ error: 'Either a link or file URL is required.' });
+            }
+
+            const newMaterial = {
+                sessionId: new ObjectId(sessionId),
+                title,
+                description,
+                resourceLink: resourceLink || '',
+                fileURL: fileURL || '',
+                uploadedBy,
+                uploadedAt: new Date(),
+            };
+
+            const result = await materialsCollection.insertOne(newMaterial);
+            res.send({ insertedId: result.insertedId });
+        });
+
+
+        //--------------------------------------------------------
+
+        // ✅ GET /tutors/:email/approved-sessions
+        app.get('/tutors/:email/approved-sessions', async (req, res) => {
+            const { email } = req.params;
+            try {
+                const sessions = await sessionsCollection
+                    .find({ tutorEmail: email, status: 'approved' })
+                    .toArray();
+                res.send(sessions);
+            } catch (error) {
+                console.error('Error fetching approved sessions:', error);
+                res.status(500).send({ error: 'Failed to fetch approved sessions' });
             }
         });
 
