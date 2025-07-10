@@ -370,6 +370,24 @@ async function run() {
             res.json(sessions);
         });
 
+        //-------------------------------------------------------
+
+        // GET /sessions/:id - fetch single session by ID
+        app.get('/sessions/:id', async (req, res) => {
+            const { id } = req.params;
+            try {
+                const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
+                if (!session) {
+                    return res.status(404).send({ error: 'Session not found' });
+                }
+                res.send(session);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ error: 'Server error' });
+            }
+        });
+
+
         // ======================================================
 
 
