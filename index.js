@@ -370,9 +370,9 @@ async function run() {
 
             let filter = {};
             if (tutorEmail) {
-                filter = { tutorEmail, status: 'approved' };
+                filter = { tutorEmail }; // Remove status filter here
             } else {
-                filter = { status: 'approved' }; // ✅ Only approved sessions
+                filter = { status: 'approved' };
             }
 
             try {
@@ -383,6 +383,7 @@ async function run() {
                 res.status(500).json({ error: 'Failed to fetch sessions' });
             }
         });
+
 
 
         //-------------------------------------------------------
@@ -473,6 +474,59 @@ async function run() {
             } catch (error) {
                 console.error('Error fetching approved sessions:', error);
                 res.status(500).send({ error: 'Failed to fetch approved sessions' });
+            }
+        });
+
+
+        // ======================================================
+
+        app.get('/materials/tutor/:email', async (req, res) => {
+            const { email } = req.params;
+            try {
+                const materials = await materialsCollection.find({ uploadedBy: email }).toArray();
+                res.send(materials);
+            } catch (error) {
+                console.error('❌ Failed to fetch materials:', error);
+                res.status(500).send({ error: 'Failed to fetch materials' });
+            }
+        });
+
+        //------------------------------------------------------
+        app.patch('/materials/:id', async (req, res) => {
+            const { id } = req.params;
+            const { title, description, resourceLink, fileURL } = req.body;
+
+            const updateDoc = {
+                ...(title && { title }),
+                ...(description && { description }),
+                ...(resourceLink && { resourceLink }),
+                ...(fileURL && { fileURL }),
+                updatedAt: new Date()
+            };
+
+            try {
+                const result = await materialsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateDoc }
+                );
+                res.send(result);
+            } catch (error) {
+                console.error('❌ Failed to update material:', error);
+                res.status(500).send({ error: 'Failed to update material' });
+            }
+        });
+
+        //--------------------------------------------------------
+
+        app.delete('/materials/:id', async (req, res) => {
+            const { id } = req.params;
+
+            try {
+                const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                console.error('❌ Failed to delete material:', error);
+                res.status(500).send({ error: 'Failed to delete material' });
             }
         });
 
