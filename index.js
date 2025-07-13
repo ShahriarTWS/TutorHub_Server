@@ -530,6 +530,17 @@ async function run() {
             }
         });
 
+        //-------------------------------------------------------
+        // ✅ GET all materials (for admin)
+        app.get('/materials', async (req, res) => {
+            try {
+                const materials = await materialsCollection.find().toArray();
+                res.send(materials);
+            } catch (error) {
+                console.error('❌ Failed to fetch materials:', error);
+                res.status(500).send({ error: 'Failed to fetch materials' });
+            }
+        });
 
         // ======================================================
 
