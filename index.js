@@ -162,17 +162,17 @@ async function run() {
 
 
         // PATCH tutor status
-        app.patch('/tutors/:id', async (req, res) => {
-            const id = req.params.id;
-            const { status } = req.body;
+        // app.patch('/tutors/:id', async (req, res) => {
+        //     const id = req.params.id;
+        //     const { status } = req.body;
 
-            const result = await tutorsCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { status } }
-            );
+        //     const result = await tutorsCollection.updateOne(
+        //         { _id: new ObjectId(id) },
+        //         { $set: { status } }
+        //     );
 
-            res.send(result);
-        });
+        //     res.send(result);
+        // });
 
 
         //------------------------------------------------------
@@ -180,21 +180,19 @@ async function run() {
         // Example Express PATCH route for tutor update
 
         app.patch('/tutors/:id', async (req, res) => {
-            const { id } = req.params;
             const { status, feedback } = req.body;
-
-            const updateDoc = { status };
-            if (status === 'cancelled' && feedback) {
-                updateDoc.feedback = feedback;
-            }
+            const updateDoc = {};
+            if (status) updateDoc.status = status;
+            if (status === 'cancelled' && feedback) updateDoc.feedback = feedback;
 
             const result = await tutorsCollection.updateOne(
-                { _id: ObjectId(id) },
+                { _id: new ObjectId(req.params.id) },
                 { $set: updateDoc }
             );
 
             res.send(result);
         });
+
 
 
         // ======================================================
@@ -465,6 +463,30 @@ async function run() {
             res.send({ insertedId: result.insertedId });
         });
 
+        //--------------------------------------------------------
+        app.get('/materials/session/:sessionId/student/:email', async (req, res) => {
+            const { sessionId, email } = req.params;
+
+            try {
+                const payment = await paymentsCollection.findOne({
+                    email,
+                    sessionId: new ObjectId(sessionId)
+                });
+
+                if (!payment) {
+                    return res.status(403).json({ error: 'Access denied. Payment not found for this session.' });
+                }
+
+                const materials = await materialsCollection.find({ sessionId: new ObjectId(sessionId) }).toArray();
+
+                res.json(materials);
+            } catch (error) {
+                console.error('Error fetching materials with payment check:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
+
 
         //--------------------------------------------------------
 
@@ -611,6 +633,109 @@ async function run() {
             } catch (error) {
                 console.error('❌ Error fetching payments:', error);
                 res.status(500).send({ error: 'Failed to fetch payment history' });
+            }
+        });
+
+
+        // ======================================================
+
+        app.post('/feedbacks', async (req, res) => {
+            const { sessionId, studentEmail, rating, feedback } = req.body;
+
+            if (!sessionId || !studentEmail || !rating) {
+                return res.status(400).json({ error: 'sessionId, studentEmail, and rating are required' });
+            }
+
+            const db = client.db('tutorDB');
+            const feedbackCollection = db.collection('feedbacks');
+
+            try {
+                // Check if feedback already exists for this student and session (optional)
+                const existing = await feedbackCollection.findOne({ sessionId: new ObjectId(sessionId), studentEmail });
+                if (existing) {
+                    return res.status(400).json({ error: 'You have already submitted feedback for this session.' });
+                }
+
+                const newFeedback = {
+                    sessionId: new ObjectId(sessionId),
+                    studentEmail,
+                    rating,
+                    feedback: feedback || '',
+                    createdAt: new Date(),
+                };
+
+                const result = await feedbackCollection.insertOne(newFeedback);
+                res.json({ success: true, insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Error submitting feedback:', error);
+                res.status(500).json({ error: 'Failed to submit feedback' });
+            }
+        });
+
+        //-------------------------------------------------------
+        // GET /feedbacks/user/:email
+        app.get('/feedbacks/user/:email', async (req, res) => {
+            const { email } = req.params;
+
+            try {
+                const db = client.db('tutorDB');
+                const feedbackCollection = db.collection('feedbacks');
+
+                const feedbacks = await feedbackCollection
+                    .find({ studentEmail: email })
+                    .toArray();
+
+                res.json(feedbacks);
+            } catch (error) {
+                console.error('Error fetching user feedbacks:', error);
+                res.status(500).json({ error: 'Failed to fetch feedbacks' });
+            }
+        });
+        //-------------------------------------------------------
+        // ✅ Get all feedbacks for a session
+        app.get('/feedbacks/session/:sessionId', async (req, res) => {
+            const { sessionId } = req.params;
+            const db = client.db('tutorDB');
+            const feedbackCollection = db.collection('feedbacks');
+
+            try {
+                const feedbacks = await feedbackCollection
+                    .find({ sessionId: new ObjectId(sessionId) })
+                    .toArray();
+
+                res.json(feedbacks);
+            } catch (error) {
+                console.error('Error fetching session feedbacks:', error);
+                res.status(500).json({ error: 'Failed to fetch feedbacks' });
+            }
+        });
+
+        //-------------------------------------------------------
+        app.patch('/feedbacks/:id', async (req, res) => {
+            const { id } = req.params;
+            const { rating, feedback } = req.body;
+
+            if (!rating) return res.status(400).json({ error: 'Rating is required' });
+
+            try {
+                const db = client.db('tutorDB');
+                const feedbackCollection = db.collection('feedbacks');
+
+                const result = await feedbackCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            rating,
+                            feedback: feedback || '',
+                            updatedAt: new Date()
+                        }
+                    }
+                );
+
+                res.json({ success: result.modifiedCount > 0 });
+            } catch (error) {
+                console.error('Error updating feedback:', error);
+                res.status(500).json({ error: 'Failed to update feedback' });
             }
         });
 
