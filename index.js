@@ -2,10 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const Stripe = require('stripe');
+// const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
 
 
 // Load environment variables from .env file
 dotenv.config();
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 
 
@@ -43,6 +47,7 @@ async function run() {
         const adminCollection = db.collection('adminCollection');
         const sessionsCollection = db.collection('sessions');
         const materialsCollection = db.collection('materials');
+        const paymentsCollection = db.collection('payments');
 
 
         // ======================================================
@@ -543,6 +548,75 @@ async function run() {
         });
 
         // ======================================================
+        // ==============================================
+        // ✅ STRIPE PAYMENT ROUTES
+        // ==============================================
+
+        // Create Payment Intent
+        // POST /payments/create-payment-intent
+        app.post('/payments/create-payment-intent', async (req, res) => {
+            const { amount } = req.body;
+
+            if (!amount || amount < 1) {
+                return res.status(400).send({ error: 'Invalid amount' });
+            }
+
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: Math.round(amount * 100), // ✅ Convert to poisha
+                    currency: 'bdt', // ✅ Use 'bdt' for Bangladeshi Taka
+                    payment_method_types: ['card'],
+                });
+
+                res.send({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                console.error('❌ Error creating payment intent:', error);
+                res.status(500).send({ error: 'Failed to create payment intent' });
+            }
+        });
+
+
+        // Store Payment Info After Successful Payment
+        app.post('/payments/store-payment', async (req, res) => {
+            const { email, amount, transactionId, date, sessionId } = req.body;
+
+            if (!email || !amount || !transactionId || !date) {
+                return res.status(400).json({ error: 'Missing required payment fields' });
+            }
+
+            try {
+                const paymentRecord = {
+                    email,
+                    amount,
+                    transactionId,
+                    sessionId: sessionId ? new ObjectId(sessionId) : null,
+                    date: new Date(date),
+                };
+
+                const result = await paymentsCollection.insertOne(paymentRecord);
+                res.send({ success: true, insertedId: result.insertedId });
+            } catch (error) {
+                console.error('❌ Error storing payment:', error);
+                res.status(500).json({ error: 'Failed to store payment' });
+            }
+        });
+
+        // Get all payments by user email
+        app.get('/payments/user/:email', async (req, res) => {
+            const { email } = req.params;
+
+            try {
+                const payments = await paymentsCollection.find({ email }).toArray();
+                res.send(payments);
+            } catch (error) {
+                console.error('❌ Error fetching payments:', error);
+                res.status(500).send({ error: 'Failed to fetch payment history' });
+            }
+        });
+
+
+        // ======================================================
+
 
 
         // Send a ping to confirm a successful connection
