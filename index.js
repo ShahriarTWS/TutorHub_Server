@@ -767,6 +767,106 @@ async function run() {
 
         // ======================================================
 
+        // Create a new note
+        app.post('/notes', async (req, res) => {
+            try {
+                const { title, content, studentEmail } = req.body;
+                if (!title || !content || !studentEmail) {
+                    return res.status(400).json({ error: 'Title, content, and studentEmail are required' });
+                }
+
+                const newNote = {
+                    title,
+                    content,
+                    studentEmail,
+                    createdAt: getBDTime(),
+                    updatedAt: getBDTime(),
+                };
+
+                const result = await notesCollection.insertOne(newNote);
+                res.status(201).json({ insertedId: result.insertedId });
+            } catch (error) {
+                console.error('Failed to create note:', error);
+                res.status(500).json({ error: 'Failed to create note' });
+            }
+        });
+
+        // Get all notes for a student
+        app.get('/notes/:studentEmail', async (req, res) => {
+            try {
+                const { studentEmail } = req.params;
+                const notes = await notesCollection.find({ studentEmail }).toArray();
+                res.json(notes);
+            } catch (error) {
+                console.error('Failed to fetch notes:', error);
+                res.status(500).json({ error: 'Failed to fetch notes' });
+            }
+        });
+
+        // Get a single note by ID
+        app.get('/notes/note/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const note = await notesCollection.findOne({ _id: new ObjectId(id) });
+                if (!note) {
+                    return res.status(404).json({ error: 'Note not found' });
+                }
+                res.json(note);
+            } catch (error) {
+                console.error('Failed to fetch note:', error);
+                res.status(500).json({ error: 'Failed to fetch note' });
+            }
+        });
+
+        // Update a note by ID
+        app.patch('/notes/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { title, content } = req.body;
+
+                if (!title && !content) {
+                    return res.status(400).json({ error: 'At least one field (title or content) is required to update' });
+                }
+
+                const updateDoc = { updatedAt: getBDTime() };
+                if (title) updateDoc.title = title;
+                if (content) updateDoc.content = content;
+
+                const result = await notesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateDoc }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: 'Note not found' });
+                }
+
+                res.json({ success: true });
+            } catch (error) {
+                console.error('Failed to update note:', error);
+                res.status(500).json({ error: 'Failed to update note' });
+            }
+        });
+
+        // Delete a note by ID
+        app.delete('/notes/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await notesCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({ error: 'Note not found' });
+                }
+
+                res.json({ success: true });
+            } catch (error) {
+                console.error('Failed to delete note:', error);
+                res.status(500).json({ error: 'Failed to delete note' });
+            }
+        });
+
+        // ======================================================
+
 
 
         // Send a ping to confirm a successful connection
