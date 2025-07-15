@@ -3,7 +3,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const Stripe = require('stripe');
-// const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const admin = require("firebase-admin");
+const cookieParser = require('cookie-parser');
 
 
 
@@ -17,8 +18,22 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 3000;
 
+
+const serviceAccount = require("./firebase-admin-key.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+
+
 // Middleware
-app.use(cors());
+// app.use(cors());
+app.use(cors({
+    origin: 'http://localhost:5174',
+    credentials: true,
+}));
+app.use(cookieParser());
 app.use(express.json());
 
 // === Bangladesh Time Helper ===
@@ -54,6 +69,115 @@ async function run() {
         const materialsCollection = db.collection('materials');
         const paymentsCollection = db.collection('payments');
         const notesCollection = db.collection('notesCollection');
+
+
+
+        //custom middlewares
+        const verifyFBToken = async (req, res, next) => {
+            let token;
+
+            if (req.cookies?.token) {
+                token = req.cookies.token;
+            }
+
+            else if (req.headers?.authorization?.startsWith('Bearer ')) {
+                token = req.headers.authorization.split(' ')[1];
+            }
+
+            if (!token) {
+                return res.status(401).send({ message: 'unauthorized access' });
+            }
+
+            try {
+                const decoded = await admin.auth().verifyIdToken(token);
+                req.decoded = decoded;
+                next();
+            } catch (error) {
+                return res.status(401).send({ message: 'unauthorized access' });
+            }
+        }
+
+
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded?.email;
+
+            const user = await adminCollection.findOne({ email });
+            console.log(user);
+
+            next();
+        };
+
+        const verifyTutor = async (req, res, next) => {
+            const email = req.decoded?.email;
+
+            try {
+                const user = await usersCollection.findOne({ email });
+
+                if (!user || user.role !== "tutor") {
+                    return res.status(403).send({ message: "Forbidden: Tutors only" });
+                }
+
+                next();
+            } catch (error) {
+                console.error("Error in verifyTutor middleware:", error);
+                res.status(500).send({ message: "Internal Server Error" });
+            }
+        };
+
+
+        const verifyStudent = async (req, res, next) => {
+            const email = req.decoded?.email;
+
+            try {
+                const user = await usersCollection.findOne({ email });
+
+                if (!user || user.role !== "student") {
+                    return res.status(403).send({ message: "Forbidden: Student only" });
+                }
+
+                next();
+            } catch (error) {
+                console.error("Error in verifyStudent middleware:", error);
+                res.status(500).send({ message: "Internal Server Error" });
+            }
+        };
+
+
+        // ================== LOGIN =====================
+        app.post('/login', async (req, res) => {
+            const { token } = req.body;
+
+            if (!token) {
+                return res.status(400).send({ message: 'Token is required' });
+            }
+
+            try {
+                const decoded = await admin.auth().verifyIdToken(token);
+
+                // Set HTTP-only cookie
+                res.cookie('token', token, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production', // set to true in production
+                    sameSite: 'Lax',
+                    // maxAge: 60 * 60 * 1000, // 1 hour
+                });
+
+                res.send({ message: 'Login successful' });
+            } catch (error) {
+                console.error('Login error:', error);
+                res.status(401).send({ message: 'Unauthorized' });
+            }
+        });
+
+        // ================== LOGOUT =====================
+        app.post('/logout', (req, res) => {
+            res.clearCookie('token');
+            res.send({ message: 'Logged out successfully' });
+        });
+
+
+
+
 
 
         // ======================================================
@@ -116,9 +240,8 @@ async function run() {
 
         //-------------------------------------------------------
 
-        app.get('/tutors/all', async (req, res) => {
+        app.get('/tutors/all', verifyFBToken, verifyAdmin, async (req, res) => {
             const { status, search } = req.query;
-
             const filter = {};
             if (status) filter.status = status;
             if (search) filter.name = { $regex: search, $options: 'i' };
@@ -133,7 +256,8 @@ async function run() {
         });
 
         //-------------------------------------------------------
-        app.get('/tutors/pending', async (req, res) => {
+        app.get('/tutors/pending', verifyFBToken, verifyAdmin, async (req, res) => {
+            console.log(req.decoded);
             try {
                 const pendingTutors = await tutorsCollection.find({ status: 'pending' }).toArray();
                 res.status(200).json(pendingTutors);
@@ -142,6 +266,7 @@ async function run() {
                 res.status(500).json({ message: 'Server error' });
             }
         });
+
 
         app.get('/tutors/email/:email', async (req, res) => {
             const email = req.params.email;
@@ -158,7 +283,7 @@ async function run() {
         //-------------------------------------------------------
 
         // GET pending tutors
-        app.get('/tutors', async (req, res) => {
+        app.get('/tutors', verifyFBToken, verifyAdmin, async (req, res) => {
             const status = req.query.status;
             if (!status) return res.status(400).json({ error: 'Status is required' });
 
@@ -167,25 +292,11 @@ async function run() {
         });
 
 
-        // PATCH tutor status
-        // app.patch('/tutors/:id', async (req, res) => {
-        //     const id = req.params.id;
-        //     const { status } = req.body;
-
-        //     const result = await tutorsCollection.updateOne(
-        //         { _id: new ObjectId(id) },
-        //         { $set: { status } }
-        //     );
-
-        //     res.send(result);
-        // });
-
-
         //------------------------------------------------------
 
         // Example Express PATCH route for tutor update
 
-        app.patch('/tutors/:id', async (req, res) => {
+        app.patch('/tutors/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             const { status, feedback } = req.body;
             const updateDoc = {};
             if (status) updateDoc.status = status;
@@ -203,7 +314,7 @@ async function run() {
 
         // ======================================================
 
-        app.get('/users/role/:email', async (req, res) => {
+        app.get('/users/role/:email', verifyFBToken, verifyAdmin, async (req, res) => {
             const email = req.params.email;
 
             try {
@@ -231,7 +342,7 @@ async function run() {
 
         // ======================================================
 
-        app.get('/admin/users', async (req, res) => {
+        app.get('/admin/users', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const { search = '', page = 1, limit = 10 } = req.query;
                 const pageNum = parseInt(page);
@@ -286,7 +397,7 @@ async function run() {
 
         // ======================================================
         // ✅ ADDED THIS PATCH ROUTE TO UPDATE USER ROLE
-        app.patch('/admin/users/:id/role', async (req, res) => {
+        app.patch('/admin/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
             const { id } = req.params;
             const { role } = req.body;
 
@@ -328,7 +439,7 @@ async function run() {
 
         // ======================================================
 
-        app.post('/sessions', async (req, res) => {
+        app.post('/sessions', verifyFBToken, verifyTutor, async (req, res) => {
             try {
                 const session = req.body;
                 const result = await sessionsCollection.insertOne({
@@ -344,7 +455,7 @@ async function run() {
         });
 
         //---------------------------------------------------------
-        app.get('/admin/sessions', async (req, res) => {
+        app.get('/admin/sessions', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const sessions = await sessionsCollection.find().toArray();
                 res.send(sessions);
@@ -355,7 +466,7 @@ async function run() {
 
         //-------------------------------------------------------
 
-        app.patch('/admin/sessions/:id', async (req, res) => {
+        app.patch('/admin/sessions/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             const { id } = req.params;
             const updates = req.body;
 
@@ -372,8 +483,7 @@ async function run() {
 
         //------------------------------------------------------
 
-        // Example backend GET /sessions route snippet
-        // Optional: Make /sessions only return approved if no tutorEmail
+        // Make /sessions only return approved if no tutorEmail
         app.get('/sessions', async (req, res) => {
             const { tutorEmail } = req.query;
 
@@ -398,7 +508,7 @@ async function run() {
         //-------------------------------------------------------
 
         // GET /sessions/:id - fetch single session by ID
-        app.get('/sessions/:id', async (req, res) => {
+        app.get('/sessions/:id', verifyFBToken, verifyAdmin || verifyTutor, async (req, res) => {
             const { id } = req.params;
             try {
                 const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
@@ -414,7 +524,7 @@ async function run() {
 
         //-------------------------------------------------------
 
-        app.delete('/sessions/:id', async (req, res) => {
+        app.delete('/sessions/:id', verifyFBToken, verifyTutor, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -428,39 +538,10 @@ async function run() {
 
         // ======================================================
 
-        // ========================================
-        // 📁 Upload Materials
-
-
-        // POST /materials - Upload resource file or link
-        // POST /materials
-        // app.post('/materials/:sessionId', async (req, res) => {
-        //     const { sessionId } = req.params;
-        //     const { type, value } = req.body;
-
-        //     if (!sessionId || !type || !value) {
-        //         return res.status(400).json({ error: 'Session ID, type, and value are required' });
-        //     }
-
-        //     const material = {
-        //         sessionId: new ObjectId(sessionId),
-        //         type, // 'link' or 'file'
-        //         value, // actual URL string or file URL
-        //         uploadedAt: getBDTime()
-        //     };
-
-        //     try {
-        //         const result = await materialsCollection.insertOne(material);
-        //         res.send({ insertedId: result.insertedId });
-        //     } catch (error) {
-        //         console.error('❌ Error uploading material:', error);
-        //         res.status(500).send({ error: 'Failed to upload material' });
-        //     }
-        // });
 
 
         // GET /materials/:sessionId - Fetch uploaded materials for a session
-        app.post('/materials/:sessionId', async (req, res) => {
+        app.post('/materials/:sessionId', verifyFBToken, verifyAdmin || verifyTutor, async (req, res) => {
             const { sessionId } = req.params;
             const { title, description, uploadedBy, resourceLink, fileURL } = req.body;
 
@@ -483,8 +564,11 @@ async function run() {
         });
 
         //--------------------------------------------------------
-        app.get('/materials/session/:sessionId/student/:email', async (req, res) => {
+        app.get('/materials/session/:sessionId/student/:email', verifyFBToken, async (req, res) => {
             const { sessionId, email } = req.params;
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
 
             try {
                 const payment = await paymentsCollection.findOne({
@@ -526,8 +610,9 @@ async function run() {
 
         // ======================================================
 
-        app.get('/materials/tutor/:email', async (req, res) => {
+        app.get('/materials/tutor/:email', verifyFBToken || verifyAdmin, async (req, res) => {
             const { email } = req.params;
+
             try {
                 const materials = await materialsCollection.find({ uploadedBy: email }).toArray();
                 res.send(materials);
@@ -538,7 +623,7 @@ async function run() {
         });
 
         //------------------------------------------------------
-        app.patch('/materials/:id', async (req, res) => {
+        app.patch('/materials/:id', verifyFBToken, verifyAdmin || verifyTutor, async (req, res) => {
             const { id } = req.params;
             const { title, description, resourceLink, fileURL } = req.body;
 
@@ -564,7 +649,7 @@ async function run() {
 
         //--------------------------------------------------------
 
-        app.delete('/materials/:id', async (req, res) => {
+        app.delete('/materials/:id', verifyFBToken, verifyAdmin || verifyTutor, async (req, res) => {
             const { id } = req.params;
 
             try {
@@ -578,7 +663,7 @@ async function run() {
 
         //-------------------------------------------------------
         // ✅ GET all materials (for admin)
-        app.get('/materials', async (req, res) => {
+        app.get('/materials', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const materials = await materialsCollection.find().toArray();
                 res.send(materials);
@@ -588,7 +673,6 @@ async function run() {
             }
         });
 
-        // ======================================================
         // ==============================================
         // ✅ STRIPE PAYMENT ROUTES
         // ==============================================
@@ -649,9 +733,11 @@ async function run() {
 
 
         // Get all payments by user email
-        app.get('/payments/user/:email', async (req, res) => {
+        app.get('/payments/user/:email', verifyFBToken, async (req, res) => {
             const { email } = req.params;
-
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
             try {
                 const payments = await paymentsCollection.find({ email }).toArray();
                 res.send(payments);
@@ -768,9 +854,12 @@ async function run() {
         // ======================================================
 
         // Create a new note
-        app.post('/notes', async (req, res) => {
+        app.post('/notes', verifyFBToken, async (req, res) => {
             try {
                 const { title, content, studentEmail } = req.body;
+                if (studentEmail !== req.decoded.email) {
+                    return res.status(403).send({ message: 'forbidden access' })
+                }
                 if (!title || !content || !studentEmail) {
                     return res.status(400).json({ error: 'Title, content, and studentEmail are required' });
                 }
@@ -792,9 +881,12 @@ async function run() {
         });
 
         // Get all notes for a student
-        app.get('/notes/:studentEmail', async (req, res) => {
+        app.get('/notes/:studentEmail', verifyFBToken, async (req, res) => {
             try {
                 const { studentEmail } = req.params;
+                if (studentEmail !== req.decoded.email) {
+                    return res.status(403).send({ message: 'forbidden access' })
+                }
                 const notes = await notesCollection.find({ studentEmail }).toArray();
                 res.json(notes);
             } catch (error) {
