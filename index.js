@@ -21,6 +21,11 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// === Bangladesh Time Helper ===
+const getBDTime = () => {
+    const now = new Date();
+    return new Date(now.getTime() + 6 * 60 * 60 * 1000); // Add 6 hours
+};
 
 
 
@@ -63,7 +68,7 @@ async function run() {
                     email: user.email,
                     photoURL: user.photoURL,
                     role: "student",
-                    createdAt: new Date()
+                    createdAt: getBDTime()
                 }
             };
 
@@ -302,7 +307,7 @@ async function run() {
                         email: user.email,
                         photo: user.photoURL || '',
                         status: 'approved',
-                        createdAt: new Date()
+                        createdAt: getBDTime()
                     });
                 }
 
@@ -328,7 +333,7 @@ async function run() {
                 const result = await sessionsCollection.insertOne({
                     ...session,
                     status: 'pending',
-                    createdAt: new Date(),
+                    createdAt: getBDTime(),
                 });
                 res.send({ insertedId: result.insertedId });
             } catch (error) {
@@ -427,7 +432,7 @@ async function run() {
         //         sessionId: new ObjectId(sessionId),
         //         type, // 'link' or 'file'
         //         value, // actual URL string or file URL
-        //         uploadedAt: new Date()
+        //         uploadedAt: getBDTime()
         //     };
 
         //     try {
@@ -456,7 +461,7 @@ async function run() {
                 resourceLink: resourceLink || '',
                 fileURL: fileURL || '',
                 uploadedBy,
-                uploadedAt: new Date(),
+                uploadedAt: getBDTime(),
             };
 
             const result = await materialsCollection.insertOne(newMaterial);
@@ -528,7 +533,7 @@ async function run() {
                 ...(description && { description }),
                 ...(resourceLink && { resourceLink }),
                 ...(fileURL && { fileURL }),
-                updatedAt: new Date()
+                updatedAt: getBDTime()
             };
 
             try {
@@ -602,7 +607,12 @@ async function run() {
         app.post('/payments/store-payment', async (req, res) => {
             const { email, amount, transactionId, date, sessionId } = req.body;
 
-            if (!email || !amount || !transactionId || !date) {
+            if (
+                !email ||
+                amount === undefined || amount === null ||
+                !transactionId ||
+                !date
+            ) {
                 return res.status(400).json({ error: 'Missing required payment fields' });
             }
 
@@ -612,7 +622,7 @@ async function run() {
                     amount,
                     transactionId,
                     sessionId: sessionId ? new ObjectId(sessionId) : null,
-                    date: new Date(date),
+                    date: getBDTime(date),
                 };
 
                 const result = await paymentsCollection.insertOne(paymentRecord);
@@ -622,6 +632,7 @@ async function run() {
                 res.status(500).json({ error: 'Failed to store payment' });
             }
         });
+
 
         // Get all payments by user email
         app.get('/payments/user/:email', async (req, res) => {
@@ -661,7 +672,7 @@ async function run() {
                     studentEmail,
                     rating,
                     feedback: feedback || '',
-                    createdAt: new Date(),
+                    createdAt: getBDTime(),
                 };
 
                 const result = await feedbackCollection.insertOne(newFeedback);
@@ -727,7 +738,7 @@ async function run() {
                         $set: {
                             rating,
                             feedback: feedback || '',
-                            updatedAt: new Date()
+                            updatedAt: getBDTime()
                         }
                     }
                 );
