@@ -53,6 +53,7 @@ async function run() {
         const sessionsCollection = db.collection('sessions');
         const materialsCollection = db.collection('materials');
         const paymentsCollection = db.collection('payments');
+        const notesCollection = db.collection('notesCollection');
 
 
         // ======================================================
@@ -408,6 +409,19 @@ async function run() {
             } catch (error) {
                 console.error(error);
                 res.status(500).send({ error: 'Server error' });
+            }
+        });
+
+        //-------------------------------------------------------
+
+        app.delete('/sessions/:id', async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (error) {
+                console.error('Failed to delete session:', error);
+                res.status(500).send({ error: 'Failed to delete session' });
             }
         });
 
