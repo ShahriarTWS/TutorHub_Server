@@ -19,7 +19,8 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 
-const serviceAccount = require("./firebase-admin-key.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf-8');
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -58,7 +59,7 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
 
         // ======================================================
         const db = client.db('tutorDB');
@@ -159,7 +160,7 @@ async function run() {
                     httpOnly: true,
                     secure: process.env.NODE_ENV === 'production', // set to true in production
                     sameSite: 'Lax',
-                    // maxAge: 60 * 60 * 1000, // 1 hour
+                    maxAge: 1000 * 60 * 60 * 24 * 30,
                 });
 
                 res.send({ message: 'Login successful' });
@@ -407,23 +408,52 @@ async function run() {
 
                 const email = user.email;
 
-                // Remove from both role collections first
-                await adminCollection.deleteOne({ email });
-                await tutorsCollection.deleteOne({ email });
-
-                if (role === 'admin') {
-                    await adminCollection.insertOne({ email });
-                } else if (role === 'tutor') {
-                    await tutorsCollection.insertOne({
-                        name: user.name,
-                        email: user.email,
-                        photo: user.photoURL || '',
-                        status: 'approved',
-                        createdAt: getBDTime()
-                    });
+                // Step 1: Remove only from adminCollection if not admin anymore
+                if (role !== 'admin') {
+                    await adminCollection.deleteOne({ email });
                 }
 
-                // Optionally update user's main role (used in fallback)
+                // Step 2: Add to adminCollection if role is admin
+                if (role === 'admin') {
+                    const isAlreadyAdmin = await adminCollection.findOne({ email });
+                    if (!isAlreadyAdmin) {
+                        await adminCollection.insertOne({ email });
+                    }
+                }
+
+                // Step 3: Update tutorsCollection
+                if (role === 'tutor') {
+                    const existingTutor = await tutorsCollection.findOne({ email });
+
+                    if (!existingTutor) {
+                        // Create new tutor with info from user
+                        await tutorsCollection.insertOne({
+                            name: user.name,
+                            email: user.email,
+                            photo: user.photoURL || '',
+                            status: 'approved',
+                            createdAt: getBDTime()
+                        });
+                    } else {
+                        // Ensure status is approved if already exists
+                        await tutorsCollection.updateOne(
+                            { email },
+                            {
+                                $set: {
+                                    status: 'approved'
+                                }
+                            }
+                        );
+                    }
+                } else {
+                    // If role is not tutor anymore, just update status if needed
+                    await tutorsCollection.updateOne(
+                        { email },
+                        { $set: { status: 'removed' } }
+                    );
+                }
+
+                // Step 4: Update usersCollection role field (optional fallback)
                 await usersCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: { role } }
@@ -435,6 +465,7 @@ async function run() {
                 res.status(500).json({ success: false, message: 'Internal server error' });
             }
         });
+
 
 
         // ======================================================
@@ -911,58 +942,83 @@ async function run() {
         });
 
         // Update a note by ID
-        app.patch('/notes/:id', async (req, res) => {
+        // 🛡️ Update a note by ID — Secured
+        app.patch('/notes/:id', verifyFBToken, async (req, res) => {
             try {
                 const { id } = req.params;
                 const { title, content } = req.body;
+                const email = req.decoded.email;
+
+                // Fetch the note first
+                const note = await notesCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!note) {
+                    return res.status(404).json({ error: 'Note not found' });
+                }
+
+                // Check ownership
+                if (note.studentEmail !== email) {
+                    return res.status(403).json({ error: 'Forbidden: You can only edit your own notes' });
+                }
 
                 if (!title && !content) {
                     return res.status(400).json({ error: 'At least one field (title or content) is required to update' });
                 }
 
-                const updateDoc = { updatedAt: getBDTime() };
-                if (title) updateDoc.title = title;
-                if (content) updateDoc.content = content;
+                const updateDoc = {
+                    updatedAt: getBDTime(),
+                    ...(title && { title }),
+                    ...(content && { content }),
+                };
 
                 const result = await notesCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: updateDoc }
                 );
 
-                if (result.matchedCount === 0) {
-                    return res.status(404).json({ error: 'Note not found' });
-                }
-
-                res.json({ success: true });
+                res.json({ success: result.modifiedCount > 0 });
             } catch (error) {
                 console.error('Failed to update note:', error);
                 res.status(500).json({ error: 'Failed to update note' });
             }
         });
 
+
         // Delete a note by ID
-        app.delete('/notes/:id', async (req, res) => {
+        // 🛡️ Delete a note by ID — Secured
+        app.delete('/notes/:id', verifyFBToken, async (req, res) => {
             try {
                 const { id } = req.params;
-                const result = await notesCollection.deleteOne({ _id: new ObjectId(id) });
+                const email = req.decoded.email;
 
-                if (result.deletedCount === 0) {
+                // Fetch the note first
+                const note = await notesCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!note) {
                     return res.status(404).json({ error: 'Note not found' });
                 }
 
-                res.json({ success: true });
+                // Check ownership
+                if (note.studentEmail !== email) {
+                    return res.status(403).json({ error: 'Forbidden: You can only delete your own notes' });
+                }
+
+                const result = await notesCollection.deleteOne({ _id: new ObjectId(id) });
+
+                res.json({ success: result.deletedCount > 0 });
             } catch (error) {
                 console.error('Failed to delete note:', error);
                 res.status(500).json({ error: 'Failed to delete note' });
             }
         });
 
+
         // ======================================================
 
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
+        // await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
@@ -975,7 +1031,7 @@ run().catch(console.dir);
 
 // Sample route
 app.get('/', (req, res) => {
-    res.send('Parcel Server is running');
+    res.send('TutorHub Server is running');
 });
 
 // Start the server
