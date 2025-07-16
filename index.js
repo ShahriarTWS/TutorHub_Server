@@ -109,21 +109,21 @@ async function run() {
         };
 
         const verifyTutor = async (req, res, next) => {
-            const email = req.decoded?.email;
-
             try {
-                const user = await usersCollection.findOne({ email });
+                const userEmail = req.decoded.email;
+                const tutor = await tutorsCollection.findOne({ email: userEmail });
 
-                if (!user || user.role !== "tutor") {
-                    return res.status(403).send({ message: "Forbidden: Tutors only" });
+                if (!tutor || tutor.status !== 'approved') {
+                    return res.status(403).json({ message: 'Forbidden: Not an approved tutor' });
                 }
 
                 next();
             } catch (error) {
-                console.error("Error in verifyTutor middleware:", error);
-                res.status(500).send({ message: "Internal Server Error" });
+                console.error('verifyTutor error:', error);
+                res.status(500).json({ message: 'Server error in verifyTutor' });
             }
         };
+
 
 
         const verifyStudent = async (req, res, next) => {
@@ -241,7 +241,7 @@ async function run() {
 
         //-------------------------------------------------------
 
-        app.get('/tutors/all',verifyFBToken, verifyAdmin, async (req, res) => {
+        app.get('/tutors/all', verifyFBToken, verifyAdmin, async (req, res) => {
             const { status, search } = req.query;
             const filter = {};
             if (status) filter.status = status;
