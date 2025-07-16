@@ -31,7 +31,7 @@ admin.initializeApp({
 // Middleware
 // app.use(cors());
 app.use(cors({
-    origin: 'http://localhost:5174',
+    origin: 'https://tutorhub-pro.web.app', //http://localhost:5174
     credentials: true,
 }));
 app.use(cookieParser());
@@ -241,7 +241,7 @@ async function run() {
 
         //-------------------------------------------------------
 
-        app.get('/tutors/all', verifyFBToken, verifyAdmin, async (req, res) => {
+        app.get('/tutors/all',verifyFBToken, verifyAdmin, async (req, res) => {
             const { status, search } = req.query;
             const filter = {};
             if (status) filter.status = status;
