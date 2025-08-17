@@ -31,7 +31,7 @@ admin.initializeApp({
 // Middleware
 // app.use(cors());
 app.use(cors({
-    origin: 'http://localhost:5173', //https://tutorhub-pro.web.app
+    origin: 'https://tutorhub-pro.web.app', //http://localhost:5173
     credentials: true,
 }));
 app.use(cookieParser());
